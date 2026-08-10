@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Liumial — Community Chat (Static)</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app" class="app-root">
+    <aside class="sidebar">
+      <div class="brand">Liumial Community</div>
+      <div id="auth-area"></div>
+      <div id="servers-list" class="list"></div>
+      <button id="create-server-btn" class="btn">Create Server</button>
+      <div class="divider"></div>
+      <div class="profile-compact" id="profile-compact"></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="main-header">
+        <div id="server-title">Welcome</div>
+        <div class="header-actions">
+          <button id="toggle-theme-btn" class="btn small">Theme</button>
+          <button id="open-settings" class="btn small">Settings</button>
+        </div>
+      </header>
+
+      <section class="content">
+        <nav class="channels" id="channels-list"></nav>
+        <section class="chat-area">
+          <div id="messages" class="messages"></div>
+          <form id="message-form" class="message-form">
+            <input id="message-input" placeholder="Type a message... (use /help for bot)" autocomplete="off" />
+            <button type="submit" class="btn">Send</button>
+          </form>
+        </section>
+        <aside class="rightpanel">
+          <div class="profile-panel" id="profile-panel"></div>
+          <div class="quests" id="quests-panel"></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modals and templates -->
+  <div id="modal-root"></div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
