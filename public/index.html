@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f1724" />
+  <meta name="description" content="Liumial - Community Chat Application" />
+  <title>Liumial — Community Chat</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/loading.css" />
+</head>
+<body>
+  <div id="loading-screen" class="loading-screen">
+    <div class="loading-container">
+      <svg class="star-spinner" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="starGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#6ee7b7;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#60a5fa;stop-opacity:1" />
+          </linearGradient>
+        </defs>
+        <polygon points="100,20 130,70 185,70 145,110 175,160 100,120 25,160 55,110 15,70 70,70" fill="url(#starGradient)" filter="drop-shadow(0 0 20px #6ee7b7)" />
+      </svg>
+      <div class="loading-text">
+        <h1>Liumial</h1>
+        <p>Loading your community...</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="app" class="app-root" style="display:none">
+    <aside class="sidebar">
+      <div class="brand">🌟 Liumial</div>
+      <div id="auth-area"></div>
+      <div id="servers-list" class="list"></div>
+      <button id="create-server-btn" class="btn">+ Server</button>
+      <div class="divider"></div>
+      <div class="profile-compact" id="profile-compact"></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="main-header">
+        <div class="header-left">
+          <div id="server-title">Welcome</div>
+        </div>
+        <div class="header-actions">
+          <button id="toggle-theme-btn" class="btn small">🎨 Theme</button>
+          <button id="open-settings" class="btn small">⚙️ Settings</button>
+        </div>
+      </header>
+
+      <section class="content">
+        <nav class="channels" id="channels-list"></nav>
+        <section class="chat-area">
+          <div id="messages" class="messages"></div>
+          <form id="message-form" class="message-form">
+            <input id="message-input" placeholder="Type a message... (use /help for commands)" autocomplete="off" />
+            <button type="submit" class="btn">Send</button>
+          </form>
+        </section>
+        <aside class="rightpanel">
+          <div class="profile-panel" id="profile-panel"></div>
+          <div class="quests" id="quests-panel"></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+
+  <script src="/js/app.js" defer></script>
+</body>
+</html>
