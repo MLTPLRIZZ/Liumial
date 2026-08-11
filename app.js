@@ -1,5 +1,8 @@
-// Minimal client-side code to talk to the new server
+// Minimal client-side code to talk to the new server with verification code flow
 let token = new URLSearchParams(window.location.search).get('token') || localStorage.getItem('liumial_token');
+const urlEmail = new URLSearchParams(window.location.search).get('email');
+const urlVerify = new URLSearchParams(window.location.search).get('verify');
+let pendingEmail = null;
 if (token) localStorage.setItem('liumial_token', token);
 
 const btnGoogle = document.getElementById('btn-google');
@@ -13,6 +16,10 @@ const passEl = document.getElementById('password');
 const meBox = document.getElementById('me');
 const loggedInBox = document.getElementById('logged-in');
 const loggedOutBox = document.getElementById('logged-out');
+const verifyBox = document.getElementById('verify-box');
+const verifyEmailSpan = document.getElementById('verify-email');
+const verifyCodeInput = document.getElementById('verify-code');
+const btnVerify = document.getElementById('btn-verify');
 
 async function api(path, opts={}){
   opts.headers = opts.headers || {};
@@ -25,9 +32,14 @@ async function api(path, opts={}){
 
 btnRegister.onclick = async () => {
   try {
-    const r = await fetch('/api/auth/register', { method: 'POST', body: JSON.stringify({ username: (emailEl.value||'').split('@')[0], email: emailEl.value, password: passEl.value }), headers: { 'Content-Type': 'application/json' } });
+    const payload = { username: (emailEl.value||'').split('@')[0], email: emailEl.value, password: passEl.value };
+    const r = await fetch('/api/auth/register', { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' } });
     const j = await r.json();
-    if (j.token) { localStorage.setItem('liumial_token', j.token); token = j.token; connectSocket(); }
+    if (j.token) { localStorage.setItem('liumial_token', j.token); token = j.token; connectSocket(); showMe(); }
+    if (j.email) {
+      pendingEmail = j.email;
+      showVerify(pendingEmail);
+    }
     alert(j.message || JSON.stringify(j));
   } catch (e) { alert('error'); }
 };
@@ -36,18 +48,32 @@ btnLogin.onclick = async () => {
   try {
     const r = await fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: emailEl.value, password: passEl.value }), headers: { 'Content-Type': 'application/json' } });
     const j = await r.json();
-    if (j.token) { localStorage.setItem('liumial_token', j.token); token = j.token; connectSocket(); }
-    else if (j.token === undefined && j.verified !== undefined) { // fallback
-      // request didn't return token, but server may have responded earlier
-      if (j.verified) {
-        alert('Logged in');
-      } else {
-        alert('Verification email sent; please check your inbox.');
-      }
+    if (j.token) { localStorage.setItem('liumial_token', j.token); token = j.token; connectSocket(); showMe(); }
+    else if (j.verified === false || j.message) {
+      pendingEmail = j.email || emailEl.value;
+      showVerify(pendingEmail);
+      alert(j.message || 'Verification code sent');
     }
-    if (j.token) showMe();
   } catch (e) { alert('login failed'); }
 };
+
+btnVerify.onclick = async () => {
+  const code = verifyCodeInput.value.trim();
+  if (!code || !pendingEmail) return alert('code and email required');
+  try {
+    const r = await fetch('/api/auth/verify', { method: 'POST', body: JSON.stringify({ email: pendingEmail, code }), headers: { 'Content-Type': 'application/json' } });
+    const j = await r.json();
+    if (j.token) { localStorage.setItem('liumial_token', j.token); token = j.token; connectSocket(); showMe(); hideVerify(); alert('Verified and logged in'); }
+    else { alert(JSON.stringify(j)); }
+  } catch (e) { alert('verify failed'); }
+};
+
+function showVerify(email) {
+  verifyEmailSpan.innerText = email;
+  verifyBox.style.display = 'block';
+  loggedOutBox.style.display = 'none';
+}
+function hideVerify(){ verifyBox.style.display = 'none'; loggedOutBox.style.display = 'block'; }
 
 btnLogout.onclick = () => { logout(); };
 
@@ -55,7 +81,7 @@ async function showMe(){
   try {
     const me = await api('/me');
     meBox.innerText = `@${me.username} (${me.email})`;
-    loggedInBox.style.display = 'block'; loggedOutBox.style.display = 'none';
+    loggedInBox.style.display = 'block'; loggedOutBox.style.display = 'none'; hideVerify();
   } catch (e) { console.error(e); }
 }
 
@@ -90,5 +116,7 @@ document.getElementById('btn-send').onclick = async () => {
   } catch (e) { console.error(e); }
 };
 
+// If user was redirected from Google with email=...&verify=1, show verify box
+if (urlEmail && urlVerify) { pendingEmail = urlEmail; showVerify(pendingEmail); }
 // If token present, connect and fetch me
 if (localStorage.getItem('liumial_token')) { connectSocket(); showMe(); }

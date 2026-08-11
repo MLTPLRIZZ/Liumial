@@ -116,14 +116,13 @@ function createTransporter() {
 }
 const transporter = createTransporter();
 
-function sendVerificationEmail(email, token) {
-  const verifyUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/api/auth/verify/${token}`;
+function sendVerificationEmail(email, code) {
   const mail = {
     from: process.env.EMAIL_FROM || 'no-reply@example.com',
     to: email,
-    subject: 'Liumial verification',
-    text: `Please verify your account by visiting: ${verifyUrl}`,
-    html: `<p>Please verify your account by visiting: <a href="${verifyUrl}">${verifyUrl}</a></p>`
+    subject: 'Liumial verification code',
+    text: `Your Liumial verification code is: ${code}`,
+    html: `<p>Your Liumial verification code is: <strong>${code}</strong></p>`
   };
   return transporter.sendMail(mail);
 }
@@ -132,6 +131,11 @@ function sendVerificationEmail(email, token) {
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 function signToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+}
+
+// Helper to generate 6-digit code
+function generateCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 // Passport Google
@@ -145,8 +149,8 @@ passport.use(new GoogleStrategy({
   db.get('SELECT * FROM users WHERE google_id = ? OR email = ?', [profile.id, email], (err, row) => {
     if (err) return cb(err);
     if (row) return cb(null, row);
-    const token = uuidv4();
-    db.run('INSERT INTO users (username, email, google_id, verified, verification_token) VALUES (?,?,?,?,?)', [profile.displayName || ('g_' + profile.id), email, profile.id, 0, token], function (err) {
+    const code = generateCode();
+    db.run('INSERT INTO users (username, email, google_id, verified, verification_token) VALUES (?,?,?,?,?)', [profile.displayName || ('g_' + profile.id), email, profile.id, 0, code], function (err) {
       if (err) return cb(err);
       db.get('SELECT * FROM users WHERE id = ?', [this.lastID], (err2, newUser) => cb(err2, newUser));
     });
@@ -156,16 +160,15 @@ passport.use(new GoogleStrategy({
 
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 app.get('/auth/google/callback', passport.authenticate('google', { session: false }), (req, res) => {
-  // user in req.user
   const user = req.user;
-  // send verification email (if not verified)
   if (!user.verified) {
-    const token = user.verification_token || uuidv4();
-    db.run('UPDATE users SET verification_token = ? WHERE id = ?', [token, user.id]);
-    sendVerificationEmail(user.email, token).catch(e => console.error('sendmail', e));
+    const code = user.verification_token || generateCode();
+    db.run('UPDATE users SET verification_token = ? WHERE id = ?', [code, user.id]);
+    sendVerificationEmail(user.email, code).catch(e => console.error('sendmail', e));
+    const redirect = `${process.env.BASE_URL || 'http://localhost:3000'}/?email=${encodeURIComponent(user.email)}&verify=1`;
+    return res.redirect(redirect);
   }
   const token = signToken({ id: user.id, username: user.username });
-  // Redirect to client with token (client should parse)
   const redirect = `${process.env.BASE_URL || 'http://localhost:3000'}/?token=${token}`;
   res.redirect(redirect);
 });
@@ -175,14 +178,12 @@ app.post('/api/auth/register', async (req, res) => {
   const { username, email, password } = req.body;
   if (!username || !email || !password) return res.status(400).json({ error: 'username,email,password required' });
   const password_hash = await bcrypt.hash(password, 10);
-  const token = uuidv4();
-  db.run('INSERT INTO users (username, email, password_hash, verification_token) VALUES (?,?,?,?)', [username, email, password_hash, token], function (err) {
+  const code = generateCode();
+  db.run('INSERT INTO users (username, email, password_hash, verification_token) VALUES (?,?,?,?)', [username, email, password_hash, code], function (err) {
     if (err) return res.status(400).json({ error: 'user exists or invalid' });
     // send verification email
-    sendVerificationEmail(email, token).catch(e => console.error('sendmail', e));
-    const userId = this.lastID;
-    const t = signToken({ id: userId, username });
-    res.json({ token: t, message: 'registered; verification email sent' });
+    sendVerificationEmail(email, code).catch(e => console.error('sendmail', e));
+    res.json({ ok: true, message: 'registered; verification code sent', email });
   });
 });
 
@@ -194,21 +195,36 @@ app.post('/api/auth/login', (req, res) => {
     if (!user) return res.status(400).json({ error: 'invalid' });
     const ok = await bcrypt.compare(password, user.password_hash || '');
     if (!ok) return res.status(400).json({ error: 'invalid' });
-    // if not verified, send verification email
+    // if not verified, send verification code and do not return token
     if (!user.verified) {
-      const token = user.verification_token || uuidv4();
-      db.run('UPDATE users SET verification_token = ? WHERE id = ?', [token, user.id]);
-      sendVerificationEmail(user.email, token).catch(e => console.error('sendmail', e));
+      const code = user.verification_token || generateCode();
+      db.run('UPDATE users SET verification_token = ? WHERE id = ?', [code, user.id]);
+      sendVerificationEmail(user.email, code).catch(e => console.error('sendmail', e));
+      return res.json({ verified: false, message: 'verification code sent', email: user.email });
     }
     const t = signToken({ id: user.id, username: user.username });
-    res.json({ token: t, verified: !!user.verified });
+    res.json({ token: t, verified: true });
+  });
+});
+
+// New verification endpoint (POST with email + code)
+app.post('/api/auth/verify', (req, res) => {
+  const { email, code } = req.body;
+  if (!email || !code) return res.status(400).json({ error: 'email and code required' });
+  db.get('SELECT * FROM users WHERE email = ? AND verification_token = ?', [email, code], (err, user) => {
+    if (err || !user) return res.status(400).json({ error: 'invalid code or email' });
+    db.run('UPDATE users SET verified = 1, verification_token = NULL WHERE id = ?', [user.id], (e) => {
+      if (e) return res.status(500).json({ error: 'DB error' });
+      const t = signToken({ id: user.id, username: user.username });
+      res.json({ token: t, message: 'verified' });
+    });
   });
 });
 
 app.get('/api/auth/verify/:token', (req, res) => {
   const { token } = req.params;
   db.get('SELECT * FROM users WHERE verification_token = ?', [token], (err, user) => {
-    if (err || !user) return res.status(400).send('Invalid token');
+    if (err || !user) return res.status(400).send('Invalid token/code');
     db.run('UPDATE users SET verified = 1, verification_token = NULL WHERE id = ?', [user.id], (e) => {
       if (e) return res.status(500).send('DB error');
       res.send('Verified — you can now return to the app and log in.');

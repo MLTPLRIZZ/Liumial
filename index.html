@@ -23,6 +23,11 @@
           <button id="btn-login" class="button" style="width:100%">Log in</button>
           <button id="btn-register" class="button" style="width:100%;margin-top:8px">Register</button>
         </div>
+        <div id="verify-box" style="display:none;margin-top:8px">
+          <p>Enter the 6-digit verification code we sent to <span id="verify-email"></span>:</p>
+          <input id="verify-code" class="input" placeholder="123456" style="width:100%;margin-bottom:8px" />
+          <button id="btn-verify" class="button" style="width:100%">Verify</button>
+        </div>
         <div id="logged-in" style="display:none">
           <div id="me"></div>
           <button id="btn-logout" class="button">Log out</button>
