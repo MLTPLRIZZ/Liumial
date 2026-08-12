@@ -1,0 +1,11 @@
+{
+  "name": "liumial-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "npx serve . -p 3000"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.0.0"
+  }
+}

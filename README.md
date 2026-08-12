@@ -1,36 +1,32 @@
-Liumial — Community Chat (static demo)
+# Liumial — Deploy & Development
 
-This repository contains a static, client-only web demo of a chat-first community app named Liumial. It stores all data in the browser's localStorage so you can run it without a backend. The demo covers the features you requested:
+This branch wires Liumial for Vercel + Supabase realtime and adds Discord-like UI changes.
 
-- Username/password sign-up & login (stored locally in localStorage)
-- Servers (like Discord guilds), channels, and membership
-- Per-server text channels and direct messages (single-browser only)
-- Messages persisted in localStorage so user progress is saved in the browser
-- Profile customization (avatar color, background CSS / gradient, bio)
-- Quests: chat-based tasks that award XP and badges when completed
-- HelperBot: a simple chat bot with commands (/help, /quests, /profile, /recommend, /bg)
-- Theme settings: change accent color and global background (single color or gradient)
+Quick setup
 
-Important notes
-- This is a client-only demo: accounts and data are stored locally and do not sync across devices or users.
-- Passwords are obfuscated with base64 only; this is NOT secure. Do not use real passwords.
-- For a production-ready multi-user app, a backend (e.g., Node + PostgreSQL + WebSocket) is required.
+1. Create a Supabase project at https://app.supabase.com.
+2. In the SQL editor, run schema.sql to create tables (profiles, servers, channels, messages).
+3. In Vercel project settings, add environment variables:
+   - NEXT_PUBLIC_SUPABASE_URL = your supabase url
+   - NEXT_PUBLIC_SUPABASE_ANON_KEY = your anon public key
+   - (optional server-only) SUPABASE_SERVICE_ROLE = your service role key (do NOT expose to client)
+4. Deploy the repo from this branch on Vercel. The frontend will use Supabase Realtime for messaging.
 
-How to use
-1. Clone the repository
-2. Open index.html in a browser
-3. Click "Log in / Sign up" to create an account (data saved to localStorage)
-4. Create servers, channels, send messages, and complete quests
-5. Use commands in chat (e.g. /help, /quests, /bg <css>)
+Local testing
 
-What I added
-- index.html, style.css, app.js — the full client application
-- LICENSE (MIT)
-- README (this file)
+- Run a static server from repo root:
+  npx serve . -p 3000
+- Open http://localhost:3000
 
-Next steps I can take (choose one):
-- Scaffold a simple Node.js backend (Express + Socket.IO + SQLite/Postgres) and migrate persistence so multiple users can interact in realtime.
-- Add an import/export tool to move data from localStorage into a server-side database.
-- Create issues and a project board in this repo for the feature roadmap.
+Files added/updated in this branch
+- index.html — loading overlay, servers column, proper script order
+- style.css — Discord-like UI styles + loading overlay
+- app.js — client app refactor with Supabase integration (via server-sync.js)
+- server-sync.js — Supabase client wrapper (already present)
+- schema.sql — SQL to run in Supabase
+- server/ — Express + Socket.io example (for self-hosted sockets)
+- next-app/ — minimal Next.js scaffold showing server-side Supabase usage
 
-If you'd like me to push a backend scaffold or create issues in this repository, tell me which branch to use and I will proceed.
+Security notes
+- Do NOT put the SUPABASE_SERVICE_ROLE in client code. Use it server-side for admin-only routes.
+- Use Supabase Auth for real user authentication instead of the demo local accounts.

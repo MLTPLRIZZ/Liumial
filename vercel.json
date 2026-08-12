@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "next-app/package.json", "use": "@vercel/next" },
+    { "src": "index.html", "use": "@vercel/static" }
+  ],
+  "env": {
+    "NEXT_PUBLIC_SUPABASE_URL": "@supabase-url",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@supabase-anon-key"
+  }
+}
