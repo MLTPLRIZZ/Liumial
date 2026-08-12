@@ -1,5 +1,6 @@
 /* style.css — improved styles for Liumial static demo (updated)
    - Adds loading overlay styles, centered layout, improved message bubbles, and scrollbars
+   - Adds app-root visibility transitions and brand fade animation for loading completion
 */
 :root{
   --bg: #0f1724;
@@ -37,11 +38,30 @@ body{margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,'Helveti
   width: auto;
   height: auto;
   display:block;
+  transition: transform .35s ease, opacity .35s ease;
+}
+#loading-image.fade-out{
+  opacity: 0;
+  transform: scale(.92) translateY(-8px);
+}
+
+/* App show/hide via aria-hidden attribute */
+.app-root[aria-hidden="true"]{
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .28s ease;
+  filter: blur(0px);
+}
+.app-root[aria-hidden="false"]{
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity .28s ease;
 }
 
 .app-root{display:flex;height:100vh;align-items:stretch}
 .sidebar{width:260px;background:var(--panel);padding:18px;display:flex;flex-direction:column;gap:12px;box-shadow:0 6px 30px rgba(2,6,23,0.6)}
-.brand{font-weight:700;font-size:18px;color:var(--accent);margin-bottom:6px}
+.brand{font-weight:700;font-size:18px;color:var(--accent);margin-bottom:6px;transition:opacity .45s ease,transform .35s ease}
+.brand.fade{opacity:.15;transform:scale(.98)}
 .list{overflow:auto;flex:1;padding:8px;border-radius:10px;background:linear-gradient(180deg,rgba(255,255,255,0.01),transparent)}
 .btn{background:var(--accent);border:none;color:#042029;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:600}
 .btn.small{padding:6px 8px;font-size:13px}
