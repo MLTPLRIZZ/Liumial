@@ -48,7 +48,7 @@ body{margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,'Helveti
 .server-item.active{background:rgba(255,255,255,0.02)}
 .channel-item{padding:6px;border-radius:6px;cursor:pointer}
 .channel-item.active{background:rgba(255,255,255,0.02)}
-.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--panel);padding:18px;border-radius:8px;box-shadow:0 8px 30px rgba(2,6,23,0.7);z-index:60}
+.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--panel);padding:18px;border-radius:8px;box-shadow:0 8px 30px rgba(2,6,23,0.7);z-index:60;min-width:320px}
 .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:50}
 .color-swatch{width:34px;height:34px;border-radius:6px;cursor:pointer;border:2px solid rgba(255,255,255,0.03)}
 .gradient-preview{height:34px;border-radius:6px;border:2px solid rgba(255,255,255,0.03)}
@@ -57,7 +57,7 @@ body{margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,'Helveti
 
 /* Discord-like message rows */
 .message-row{display:flex;align-items:flex-start;gap:12px}
-.message-avatar{width:40px;height:40px;border-radius:8px;flex-shrink:0}
+.message-avatar{width:40px;height:40px;border-radius:8px;flex-shrink:0;cursor:pointer}
 .message-body{max-width:75%}
 .message-meta{color:#9fb0c7;font-size:13px;margin-bottom:4px}
 .message-text{color:#e6f0ff;padding:6px 0;white-space:pre-wrap}
@@ -76,3 +76,18 @@ body{margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,'Helveti
 
 /* Responsive */
 @media (max-width:900px){.servers-col{display:none}.sidebar{display:none}.rightpanel{display:none}}
+
+/* Profile modal (Discord style) */
+.profile-modal{min-width:420px;max-width:720px;border-radius:12px;overflow:hidden}
+.profile-banner{height:140px;background:linear-gradient(90deg,#0f1724,#071226);display:block}
+.profile-content{display:flex;gap:18px;padding:18px}
+.profile-avatar-large{width:128px;height:128px;border-radius:12px;border:4px solid rgba(0,0,0,0.6);flex-shrink:0}
+.profile-main{flex:1}
+.profile-name{font-size:20px;font-weight:700;color:#e6f0ff}
+.profile-username{color:#9fb0c7;margin-top:2px}
+.profile-bio{margin-top:10px;color:#dfeafc}
+.profile-actions{margin-top:12px;display:flex;gap:8px}
+.profile-roles{margin-top:10px}
+.profile-role{display:inline-block;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);color:#cfe5ff;margin-right:6px;font-size:13px}
+.profile-mutuals{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+.mutual-server{width:84px;height:84px;border-radius:8px;background:#0b1220;display:flex;align-items:center;justify-content:center;color:#cfe5ff;font-weight:700}
