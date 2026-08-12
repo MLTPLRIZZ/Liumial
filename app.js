@@ -1,7 +1,8 @@
-// app.js — updated for serverless deployers (Vercel/Supabase) with realtime sync, image uploads,
-// unsent handling, replies/mentions notifications, delete message, daily quest currency (luminal), and more.
+// app.js — updated: serverless features + persistent per-user progress + update announcement
 (() => {
   const DB_KEY = 'liumial_db_v1';
+  const APP_VERSION = 'v1.2.0';
+  const APP_CHANGELOG = `v1.2.0 - Persistence & Announcements\n- Per-user progress saved on login so updates won't interrupt chats\n- Dismissible update announcement showing version & changelog\n- Auto-backup applied when version changes`;
 
   const defaultState = () => ({
     users: [],
@@ -14,7 +15,17 @@
   function loadDB(){
     try{ const raw = localStorage.getItem(DB_KEY); if(!raw) return defaultState(); return JSON.parse(raw);}catch(e){console.error('DB load',e);return defaultState();}
   }
-  function saveDB(db){ localStorage.setItem(DB_KEY,JSON.stringify(db)); }
+
+  // saveDB also persists a per-user snapshot when a user is logged in
+  function saveDB(db){
+    try{ localStorage.setItem(DB_KEY,JSON.stringify(db)); }catch(e){console.warn('saveDB failed',e)}
+    try{
+      if(state && state.currentUserId){
+        localStorage.setItem(`liumial_user_${state.currentUserId}`, JSON.stringify(db));
+      }
+    }catch(e){console.warn('save per-user failed', e)}
+  }
+
   const db = loadDB();
 
   // Utilities
@@ -23,8 +34,7 @@
   function findUserByUsername(u){return db.users.find(x=>x.username && x.username.toLowerCase()===u.toLowerCase())}
   function hash(p){return btoa(p)}
 
-  // Ensure currency fields on users
-  function ensureUserFields(u){ if(!u.luminal) u.luminal = 0; if(!u.lastDailyClaim) u.lastDailyClaim = 0; return u }
+  function ensureUserFields(u){ if(!u.luminal && u.luminal!==0) u.luminal = 0; if(!u.lastDailyClaim) u.lastDailyClaim = 0; return u }
 
   // Seed if empty
   if(db.users.length===0){
@@ -37,9 +47,7 @@
     db.quests = [
       {id:'q1',title:'Introduce Yourself',desc:'Send a message in #general introducing yourself',reward:20,check:({messages,userId,server})=> messages.some(m=>m.authorId===userId && (m.content.toLowerCase().includes('hi')||m.content.toLowerCase().includes('hello')))},
       {id:'q2',title:'Customize Profile',desc:'Change your profile background or color',reward:10,check:({user})=>!!user.bg||!!user.avatarColor},
-      {id:'daily',title:'Daily Luminal',desc:'Claim daily reward of 50 luminal',reward:50,check:({user})=>{ // special daily; check handled separately
-        return false
-      }}
+      {id:'daily',title:'Daily Luminal',desc:'Claim daily reward of 50 luminal',reward:50,check:({user})=>false}
     ]
     saveDB(db)
   }
@@ -68,15 +76,14 @@
   const modalRoot = document.getElementById('modal-root')
   const openSettings = document.getElementById('open-settings')
 
-  // create file input for images (allows attach)
+  // file input for images
   const fileInput = document.createElement('input')
   fileInput.type = 'file'
   fileInput.accept = 'image/*'
-  fileInput.id = 'message-file'
   fileInput.style.display = 'none'
   messageForm.appendChild(fileInput)
 
-  // Toast area
+  // toast root
   const toastRoot = document.createElement('div')
   toastRoot.style.position = 'fixed'
   toastRoot.style.top = '16px'
@@ -96,7 +103,6 @@
     setTimeout(()=>{ t.style.opacity = '0'; setTimeout(()=>t.remove(),300)}, timeout)
   }
 
-  // Browser notification helper
   function maybeNotify(title, body){
     if(!('Notification' in window)) return
     if(Notification.permission === 'granted'){
@@ -106,23 +112,19 @@
     }
   }
 
-  // Server-sync initialization (if Supabase configured)
+  // server-sync init (if available)
   let serverSyncReady = false
   async function initServerSync(){
     if(window._serverSync && window._serverSync.enabled){
       try{
         const initial = await window._serverSync.fetchInitial()
-        // Normalize and replace local db with server data where appropriate
         if(initial){
-          // users
           if(Array.isArray(initial.users) && initial.users.length>0){
             db.users = initial.users.map(u=>ensureUserFields({ id: u.id, username: u.username||u.id, displayName: u.display_name||u.username||u.id, avatarColor: u.avatar_color||'#6ee7b7', bg: u.bg||'', bio: u.bio||'', xp: u.xp||0, badges: u.badges||[], luminal: u.luminal||0, lastDailyClaim: u.last_daily_claim||0 }))
           }
-          // servers
           if(Array.isArray(initial.servers) && initial.servers.length>0){
             db.servers = initial.servers.map(s=>({ id: s.id, name: s.name, ownerId: s.owner_id, channels: (s.channels||[]).map(c=>({id:c.id,name:c.name})), members: s.members||[], createdAt: s.created_at }))
           }
-          // messages
           if(Array.isArray(initial.messages)){
             db.messages = initial.messages.map(m=>({ id: 'srv_'+m.id, remoteId: m.id, serverId: m.server_id, channelId: m.channel_id, authorId: m.author_id, content: m.content, ts: (m.ts? (new Date(m.ts)).getTime(): now()), image: m.image_url||null, replyTo: m.reply_to||null }))
           }
@@ -130,10 +132,8 @@
           renderAll()
         }
 
-        // subscribe to new messages
         window._serverSync.onMessage(payload => {
           if(!payload) return
-          // convert and append if not present
           const exists = db.messages.some(m=>m.remoteId && (''+m.remoteId) === (''+payload.id))
           if(!exists){
             db.messages.push({ id: 'srv_'+payload.id, remoteId: payload.id, serverId: payload.server_id, channelId: payload.channel_id, authorId: payload.author_id, content: payload.content, ts: (payload.ts? (new Date(payload.ts)).getTime(): now()), image: payload.image_url||null, replyTo: payload.reply_to||null })
@@ -154,21 +154,21 @@
     }
   }
 
-  // call initServerSync shortly after load; server-sync.js is loaded before app.js via defer ordering
   setTimeout(()=>initServerSync(), 200)
 
-  // handle mention/reply notifications
+  function getUsernameById(id){ const u = db.users.find(x=>x.id===id); return u ? (u.displayName||u.username) : 'Unknown' }
+  function truncate(s, n){ if(!s) return ''; return s.length>n? s.slice(0,n-1)+'…':s }
+
   function handleMentionOrReplyNotifications(message){
     if(!state.currentUserId) return
     const me = db.users.find(u=>u.id===state.currentUserId)
     if(!me) return
-    // mentions via @username
     const mentionRegex = /@([a-zA-Z0-9_\-]+)/g
     let m;
     let notified = false
     while((m = mentionRegex.exec(message.content)) !== null){
       const uname = m[1]
-      if(uname.toLowerCase() === me.username.toLowerCase()){ // mentioned
+      if(uname.toLowerCase() === me.username.toLowerCase()){
         showToast(`You were mentioned by @${getUsernameById(message.authorId)}: "${truncate(message.content,50)}"`)
         maybeNotify('@'+me.username+' mentioned', `${getUsernameById(message.authorId)}: ${truncate(message.content,80)}`)
         state.mentionsUnread++
@@ -176,7 +176,6 @@
         break
       }
     }
-    // reply to a message authored by current user
     if(message.replyTo){
       const replied = db.messages.find(x=>x.id===message.replyTo || x.remoteId==message.replyTo)
       if(replied && replied.authorId === state.currentUserId){
@@ -188,30 +187,20 @@
     return notified
   }
 
-  function getUsernameById(id){ const u = db.users.find(x=>x.id===id); return u ? (u.displayName||u.username) : 'Unknown' }
-  function truncate(s, n){ if(!s) return ''; return s.length>n? s.slice(0,n-1)+'…':s }
-
-  // Message sending logic including image upload and retry
   async function trySendToServer(localMsg){
     try{
       if(!(window._serverSync && window._serverSync.enabled)) throw new Error('server-sync not available')
-
+      const supabase = window._serverSync.supabase
       const payload = { serverId: localMsg.serverId, channelId: localMsg.channelId, authorId: localMsg.authorId, content: localMsg.content, ts: new Date(localMsg.ts).toISOString() }
-      // handle reply
       if(localMsg.replyTo) payload.reply_to = localMsg.replyTo
-      // handle image upload
       if(localMsg.imageFile){
-        // upload to supabase storage 'uploads' bucket (must exist and be public)
-        const supabase = window._serverSync.supabase
-        const ext = localMsg.imageFile.name.split('.').pop() || 'png'
+        const ext = (localMsg.imageFile.name || 'img').split('.').pop()
         const path = `messages/${uid('f')}.${ext}`
-        const file = localMsg.imageFile
-        const { error: upErr } = await supabase.storage.from('uploads').upload(path, file, { cacheControl: '3600', upsert: false })
-        if(upErr){ console.warn('storage upload failed', upErr); throw upErr }
+        const { error: upErr } = await supabase.storage.from('uploads').upload(path, localMsg.imageFile, { cacheControl: '3600', upsert: false })
+        if(upErr) throw upErr
         const { data } = supabase.storage.from('uploads').getPublicUrl(path)
         payload.image_url = data.publicUrl
       }
-
       const serverRow = await window._serverSync.sendMessage({ serverId: payload.serverId, channelId: payload.channelId, authorId: payload.authorId, content: payload.content, ts: payload.ts, image_url: payload.image_url, reply_to: payload.reply_to })
       return serverRow
     }catch(e){
@@ -220,21 +209,78 @@
     }
   }
 
-  // delete message on server/local
   async function deleteMessage(msg){
-    // remove locally
     const idx = db.messages.findIndex(m=>m.id===msg.id)
     if(idx!==-1) db.messages.splice(idx,1)
     saveDB(db); renderAll()
-    // attempt server-side delete if remoteId exists
     if(msg.remoteId && window._serverSync && window._serverSync.enabled){
-      try{
-        await window._serverSync.supabase.from('messages').delete().eq('id', msg.remoteId)
-      }catch(e){ console.warn('server delete failed', e) }
+      try{ await window._serverSync.supabase.from('messages').delete().eq('id', msg.remoteId) }catch(e){ console.warn('server delete failed', e) }
     }
   }
 
-  // UI: render functions
+  // --- per-user persistence & update announcement ---
+  function persistUserProgress(userId){
+    try{
+      const snapshot = JSON.stringify(db)
+      localStorage.setItem(`liumial_user_${userId}`, snapshot)
+    }catch(e){ console.warn('persistUserProgress failed', e) }
+  }
+
+  function restoreUserProgress(userId){
+    try{
+      const raw = localStorage.getItem(`liumial_user_${userId}`)
+      if(!raw) return
+      const userDb = JSON.parse(raw)
+      // merge: prefer server/latest data for users/servers/messages where remoteId exists
+      // simple merge: append messages that don't already exist (by remoteId or content+ts)
+      const existingRemoteIds = new Set(db.messages.filter(m=>m.remoteId).map(m=>''+m.remoteId))
+      userDb.messages.forEach(m=>{
+        const rid = m.remoteId || null
+        if(rid && existingRemoteIds.has(''+rid)) return
+        // avoid duplicate by simple fingerprint
+        const fingerprint = `${m.authorId}|${m.ts}|${(m.content||'').slice(0,40)}`
+        const found = db.messages.some(x=>`${x.authorId}|${x.ts}|${(x.content||'').slice(0,40)}`===fingerprint)
+        if(!found){ db.messages.push(m) }
+      })
+      // merge users and servers conservatively
+      userDb.users.forEach(u=>{ if(!db.users.some(x=>x.id===u.id)) db.users.push(u) })
+      userDb.servers.forEach(s=>{ if(!db.servers.some(x=>x.id===s.id)) db.servers.push(s) })
+      saveDB(db)
+    }catch(e){ console.warn('restoreUserProgress failed', e) }
+  }
+
+  function showUpdateAnnouncement(version, changelog){
+    const seen = localStorage.getItem('liumial_seen_version')
+    if(seen === version) return
+    const ann = document.createElement('div')
+    ann.style.position = 'fixed'
+    ann.style.left = '50%'
+    ann.style.transform = 'translateX(-50%)'
+    ann.style.top = '18px'
+    ann.style.background = 'linear-gradient(90deg,#07303a,#01202a)'
+    ann.style.color = 'white'
+    ann.style.padding = '12px 16px'
+    ann.style.borderRadius = '10px'
+    ann.style.boxShadow = '0 8px 30px rgba(0,0,0,0.6)'
+    ann.style.zIndex = 999999
+    ann.innerHTML = `<strong>Update ${escapeHtml(version)}</strong><div style="font-size:13px;margin-top:6px;white-space:pre-wrap">${escapeHtml(changelog)}</div><div style="margin-top:8px;text-align:right"><button id="dismiss-update" class="btn small">Close</button></div>`
+    document.body.appendChild(ann)
+    document.getElementById('dismiss-update').onclick = ()=>{ localStorage.setItem('liumial_seen_version', version); ann.remove() }
+  }
+
+  function autoBackupOnVersionChange(){
+    const seen = localStorage.getItem('liumial_seen_version')
+    if(seen !== APP_VERSION){
+      // backup per-user snapshots so users won't lose progress after update
+      try{
+        db.users.forEach(u=>{ try{ localStorage.setItem(`liumial_user_${u.id}_backup_${APP_VERSION}`, JSON.stringify(db)) }catch(e){} })
+      }catch(e){console.warn('backup failed',e)}
+      showUpdateAnnouncement(APP_VERSION, APP_CHANGELOG)
+    }
+  }
+  // --- end persistence & announcement ---
+
+  // Render UI functions (kept concise) — similar to previous implementation
   function renderAuth(){
     authArea.innerHTML = ''
     if(state.currentUserId){
@@ -242,7 +288,7 @@
       const el = document.createElement('div')
       el.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><div style="width:44px;height:44px;border-radius:8px;background:${u.avatarColor};display:flex;align-items:center;justify-content:center;color:#032; font-weight:700">${(u.displayName||u.username).charAt(0).toUpperCase()}</div><div style="flex:1"><div style="font-weight:600">${escapeHtml(u.displayName||u.username)}</div><div class="small-muted" style="font-size:12px">@${escapeHtml(u.username)} • ⭐ ${u.luminal||0}</div></div><div><button id="logout-btn" class="btn small">Log out</button></div></div>`
       authArea.appendChild(el)
-      document.getElementById('logout-btn').onclick = ()=>{state.currentUserId=null;renderAll();saveState()}
+      document.getElementById('logout-btn').onclick = ()=>{ state.currentUserId = null; renderAll(); saveState() }
     }else{
       const btnLogin = document.createElement('button')
       btnLogin.className='btn'
@@ -288,24 +334,18 @@
         const r = db.messages.find(x=>x.id===m.replyTo||x.remoteId==m.replyTo)
         if(r){ const ra = db.users.find(u=>u.id===r.authorId) || {displayName:'Unknown',username:'unknown'}; replyHtml = `<div style="padding:8px;border-left:3px solid rgba(255,255,255,0.03);margin-bottom:6px;border-radius:6px;background:rgba(255,255,255,0.01)"><small class="small-muted">Reply to ${escapeHtml(ra.displayName||ra.username)}: ${escapeHtml(truncate(r.content,80))}</small></div>` }
       }
-
       const unsentBadge = m.unsent? '<span style="color:#f8d7da;background:rgba(255,0,0,0.06);padding:4px 8px;border-radius:8px;margin-left:8px;font-size:12px">Unsent</span>': ''
-
       body.innerHTML = meta + replyHtml + content + imageHtml + `<div style="margin-top:8px;display:flex;gap:8px;align-items:center"><button class="btn small reply-btn">Reply</button>${me?'<button class="btn small delete-btn">Delete</button>':''}${m.unsent?'<button class="btn small retry-btn">Retry</button>':''}${unsentBadge}</div>`
       row.appendChild(avatar)
       row.appendChild(body)
       wrapper.appendChild(row)
       messagesEl.appendChild(wrapper)
-
-      // actions
       const replyBtn = wrapper.querySelector('.reply-btn')
       if(replyBtn) replyBtn.onclick = ()=>{ state.replyTo = m.id || m.remoteId; messageInput.focus(); messageInput.value = `@${getUsernameById(m.authorId)} ` }
       const deleteBtn = wrapper.querySelector('.delete-btn')
       if(deleteBtn) deleteBtn.onclick = ()=>{ if(confirm('Delete this message?')) deleteMessage(m) }
       const retryBtn = wrapper.querySelector('.retry-btn')
-      if(retryBtn) retryBtn.onclick = async ()=>{ try{ delete m.unsent; if(m.imageFile && !m.image) { /* ensure file is present */ }
-          const serverRow = await trySendToServer(m); if(serverRow){ m.remoteId = serverRow.id || serverRow.remote_id || null; m.id = 'srv_'+ (m.remoteId||uid('s')); delete m.unsent; saveDB(db); renderAll() } }catch(e){ showToast('Retry failed') } }
-
+      if(retryBtn) retryBtn.onclick = async ()=>{ try{ delete m.unsent; const serverRow = await trySendToServer(m); if(serverRow){ m.remoteId = serverRow.id || serverRow.remote_id || null; m.id = 'srv_'+ (m.remoteId||uid('s')); delete m.unsent; saveDB(db); renderAll() } }catch(e){ showToast('Retry failed') } }
     })
     messagesEl.scrollTop = messagesEl.scrollHeight
   }
@@ -321,69 +361,36 @@
     document.getElementById('edit-profile-btn').onclick = showEditProfile
   }
 
-  function renderProfileCompact(){ profileCompact.innerHTML=''; if(!state.currentUserId) return; const u = db.users.find(x=>x.id===state.currentUserId); profileCompact.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><div style="width:36px;height:36px;border-radius:8px;background:${u.avatarColor};display:flex;align-items:center;justify-content:center;font-weight:700">${(u.displayName||u.username).charAt(0).toUpperCase()}</div><div style="flex:1"><div style="font-weight:600">${escapeHtml(u.displayName||u.username)}</div><div class="small-muted">@${escapeHtml(u.username)}</div></div><div><button id="logout-btn" class="btn small">Log out</button></div></div>`; const logoutBtn=document.getElementById('logout-btn'); if(logoutBtn) logoutBtn.onclick=()=>{state.currentUserId=null; renderAll(); saveState() } }
+  function renderProfileCompact(){ profileCompact.innerHTML=''; if(!state.currentUserId) return; const u = db.users.find(x=>x.id===state.currentUserId); profileCompact.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><div style="width:36px;height:36px;border-radius:8px;background:${u.avatarColor};display:flex;align-items:center;justify-content:center;font-weight:700">${(u.displayName||u.username).charAt(0).toUpperCase()}</div><div style="flex:1"><div style="font-weight:600">${escapeHtml(u.displayName||u.username)}</div><div class="small-muted">@${escapeHtml(u.username)}</div></div><div><button id="logout-btn" class="btn small">Log out</button></div></div>`; const logoutBtn=document.getElementById('logout-btn'); if(logoutBtn) logoutBtn.onclick=()=>{state.currentUserId=null; renderAll(); saveState();} }
 
-  function renderQuests(){ questsPanel.innerHTML=''; const list = db.quests || []; questsPanel.innerHTML = '<h3>Quests</h3>'; list.forEach(q=>{ const el=document.createElement('div'); el.style.marginBottom='8px'; if(q.id==='daily'){ // daily special
-        const btn = `<button class="btn small claim-daily">Claim Daily</button>`
-        el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div><strong>${q.title}</strong><div class="small-muted">${q.desc}</div></div><div>${btn}</div></div>`
-        questsPanel.appendChild(el)
-        el.querySelector('.claim-daily').onclick = claimDaily
-      } else {
-        const done = checkQuestDone(q.id)
-        el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div><strong>${q.title}</strong><div class="small-muted">${q.desc}</div></div><div>${done?'<span class="tag">Done</span>':'<button class="btn small start-quest">Start</button>'}</div></div>`
-        questsPanel.appendChild(el)
-        if(!done){ const btn = el.querySelector('.start-quest'); if(btn) btn.onclick = ()=>{ alert('Quest started: '+q.title) } }
-      } }) }
+  function renderQuests(){ questsPanel.innerHTML=''; const list = db.quests || []; questsPanel.innerHTML = '<h3>Quests</h3>'; list.forEach(q=>{ const el=document.createElement('div'); el.style.marginBottom='8px'; if(q.id==='daily'){ const btn = `<button class="btn small claim-daily">Claim Daily</button>`; el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div><strong>${q.title}</strong><div class="small-muted">${q.desc}</div></div><div>${btn}</div></div>`; questsPanel.appendChild(el); el.querySelector('.claim-daily').onclick = claimDaily } else { const done = checkQuestDone(q.id); el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div><strong>${q.title}</strong><div class="small-muted">${q.desc}</div></div><div>${done?'<span class="tag">Done</span>':'<button class="btn small start-quest">Start</button>'}</div></div>`; questsPanel.appendChild(el); if(!done){ const btn = el.querySelector('.start-quest'); if(btn) btn.onclick = ()=>{ alert('Quest started: '+q.title) } } } }) }
 
   function checkQuestDone(qid){ if(!state.currentUserId) return false; const q = db.quests.find(x=>x.id===qid); const user = db.users.find(u=>u.id===state.currentUserId); const messages = db.messages; try{return q.check({messages,userId:state.currentUserId,user,server:db.servers.find(s=>s.id===state.currentServerId)})}catch(e){return false} }
 
-  async function claimDaily(){ if(!state.currentUserId){ alert('Log in to claim daily'); return } const u = db.users.find(x=>x.id===state.currentUserId); const nowTs = now(); if(nowTs - (u.lastDailyClaim||0) < 24*60*60*1000){ alert('Daily already claimed. Come back later.'); return } u.luminal = (u.luminal||0) + 50; u.lastDailyClaim = nowTs; saveDB(db); renderAll(); showToast('You claimed 50 luminal!'); // optionally sync profile to server
-    if(window._serverSync && window._serverSync.enabled){ try{ await window._serverSync.updateProfile(u.id, { luminal: u.luminal, last_daily_claim: u.lastDailyClaim }) }catch(e){ console.warn('profile sync failed', e) } }
-  }
+  async function claimDaily(){ if(!state.currentUserId){ alert('Log in to claim daily'); return } const u = db.users.find(x=>x.id===state.currentUserId); const nowTs = now(); if(nowTs - (u.lastDailyClaim||0) < 24*60*60*1000){ alert('Daily already claimed. Come back later.'); return } u.luminal = (u.luminal||0) + 50; u.lastDailyClaim = nowTs; saveDB(db); renderAll(); showToast('You claimed 50 luminal!'); if(window._serverSync && window._serverSync.enabled){ try{ await window._serverSync.updateProfile(u.id, { luminal: u.luminal, last_daily_claim: u.lastDailyClaim }) }catch(e){ console.warn('profile sync failed', e) } } }
 
-  // Message form behavior
+  // Message sending
   messageForm.addEventListener('submit', async (e)=>{
     e.preventDefault()
     const text = messageInput.value.trim()
     const file = fileInput.files && fileInput.files[0]
     if(!text && !file) return
     if(!state.currentUserId){ alert('Log in to send messages'); return }
-
     const localMsg = { id: uid('m'), serverId: state.currentServerId, channelId: state.currentChannelId, authorId: state.currentUserId, content: text || '', ts: now(), replyTo: state.replyTo || null }
     if(file) localMsg.imageFile = file
-
-    // optimistic add
     localMsg.unsent = true
     db.messages.push(localMsg)
     saveDB(db); renderAll()
-    // reset
     messageInput.value=''; fileInput.value=''; state.replyTo = null
-
-    // try to send
     try{
       const serverRow = await trySendToServer(localMsg)
-      if(serverRow){
-        // mark synced: set remoteId and remove unsent
-        localMsg.remoteId = serverRow.id || serverRow.remote_id || null
-        localMsg.id = 'srv_'+(localMsg.remoteId||uid('s'))
-        delete localMsg.unsent
-        // if server provided ts, normalize
-        if(serverRow.ts) localMsg.ts = (new Date(serverRow.ts)).getTime()
-        // if server returned image_url, set image
-        if(serverRow.image_url) localMsg.image = serverRow.image_url
-        saveDB(db); renderAll()
-      }
-    }catch(err){
-      console.warn('send failed, message left unsent', err)
-      showToast('Message could not be sent to server — saved locally (unsent)')
-    }
+      if(serverRow){ localMsg.remoteId = serverRow.id || serverRow.remote_id || null; localMsg.id = 'srv_'+(localMsg.remoteId||uid('s')); delete localMsg.unsent; if(serverRow.ts) localMsg.ts = (new Date(serverRow.ts)).getTime(); if(serverRow.image_url) localMsg.image = serverRow.image_url; saveDB(db); renderAll() }
+    }catch(err){ console.warn('send failed, message left unsent', err); showToast('Message could not be sent to server — saved locally (unsent)') }
   })
 
-  // attempt to send a local unsent message (used by retry)
   async function retrySend(localMsg){ try{ const serverRow = await trySendToServer(localMsg); if(serverRow){ localMsg.remoteId = serverRow.id || serverRow.remote_id || null; localMsg.id = 'srv_'+(localMsg.remoteId||uid('s')); delete localMsg.unsent; if(serverRow.ts) localMsg.ts = (new Date(serverRow.ts)).getTime(); if(serverRow.image_url) localMsg.image = serverRow.image_url; saveDB(db); renderAll(); return true } }catch(e){ console.warn('retry failed', e) } return false }
 
   function runPostMessageTriggers(msg){
-    // check quests (non-daily)
     db.quests.forEach(q=>{
       if(q.id!=='daily' && checkQuestDone(q.id)){
         const u = db.users.find(x=>x.id===msg.authorId)
@@ -396,8 +403,6 @@
         }
       }
     })
-
-    // helper bot & replies
     const content = msg.content
     if(content && content.startsWith('/')){ handleCommand(msg,content) }
     else{
@@ -406,8 +411,6 @@
         db.messages.push(botReply)
       }
     }
-
-    // persist local DB
     saveDB(db)
   }
 
@@ -426,10 +429,35 @@
     saveDB(db)
   }
 
-  // Modal helpers and UI actions (similar to previous but with small updates)
-  function showAuthModal(){ showModal(`<h3>Log in / Sign up</h3><div style="display:flex;gap:8px;margin-top:8px"><input id="auth-username" class="input" placeholder="username" /><input id="auth-password" type="password" class="input" placeholder="password" /></div><div style="margin-top:8px;display:flex;gap:8px"><button class="btn" id="auth-login">Log in</button><button class="btn" id="auth-signup">Sign up</button></div><div class="small-muted footer-note">This demo stores accounts and data locally in your browser (localStorage). Not secure for production.</div>`) 
-    document.getElementById('auth-login').onclick = ()=>{ const u=document.getElementById('auth-username').value.trim(); const p=document.getElementById('auth-password').value; const found=findUserByUsername(u); if(!found){alert('User not found — sign up instead');return} if(found.password!==hash(p)){alert('Wrong password');return} state.currentUserId=found.id; closeModal(); renderAll(); saveState() }
-    document.getElementById('auth-signup').onclick = ()=>{ const u=document.getElementById('auth-username').value.trim(); const p=document.getElementById('auth-password').value; if(!u||!p){alert('Choose username and password');return} if(findUserByUsername(u)){alert('Username taken');return} const newUser={id:uid('u'),username:u,displayName:u,password:hash(p),avatarColor:randomColor(),bg:'',bio:'',xp:0,badges:[],luminal:0,lastDailyClaim:0}; db.users.push(newUser); saveDB(db); state.currentUserId=newUser.id; closeModal(); renderAll(); saveState() }
+  function showAuthModal(){
+    showModal(`<h3>Log in / Sign up</h3>
+      <div style="display:flex;gap:8px;margin-top:8px"><input id="auth-username" class="input" placeholder="username" /><input id="auth-password" type="password" class="input" placeholder="password" /></div>
+      <div style="margin-top:8px;display:flex;gap:8px"><button class="btn" id="auth-login">Log in</button><button class="btn" id="auth-signup">Sign up</button></div>
+      <div class="small-muted footer-note">This demo stores accounts and data locally in your browser (localStorage). Not secure for production.</div>`)
+    document.getElementById('auth-login').onclick = ()=>{
+      const u = document.getElementById('auth-username').value.trim()
+      const p = document.getElementById('auth-password').value
+      const found = findUserByUsername(u)
+      if(!found){alert('User not found — sign up instead') ; return}
+      if(found.password!==hash(p)){alert('Wrong password');return}
+      state.currentUserId = found.id
+      // restore saved progress for this user
+      restoreUserProgress(state.currentUserId)
+      closeModal(); renderAll(); saveState()
+    }
+    document.getElementById('auth-signup').onclick = ()=>{
+      const u = document.getElementById('auth-username').value.trim()
+      const p = document.getElementById('auth-password').value
+      if(!u || !p){alert('Choose username and password');return}
+      if(findUserByUsername(u)){alert('Username taken');return}
+      const newUser = {id:uid('u'),username:u,displayName:u,password:hash(p),avatarColor:randomColor(),bg:'',bio:'',xp:0,badges:[],luminal:0,lastDailyClaim:0}
+      db.users.push(newUser)
+      saveDB(db)
+      state.currentUserId = newUser.id
+      // persist initial progress for new user
+      persistUserProgress(state.currentUserId)
+      closeModal(); renderAll(); saveState()
+    }
   }
 
   function showEditProfile(){ const u=db.users.find(x=>x.id===state.currentUserId); showModal(`<h3>Edit Profile</h3><div style="display:flex;flex-direction:column;gap:8px"><input id="ep-display" class="input" value="${escapeHtml(u.displayName||'')}" placeholder="Display name" /><input id="ep-bio" class="input" value="${escapeHtml(u.bio||'')}" placeholder="Bio" /><label>Avatar color: <input id="ep-color" type="color" value="${u.avatarColor||'#6ee7b7'}" /></label><input id="ep-bg" class="input" value="${escapeHtml(u.bg||'')}" placeholder="Profile background CSS or color" /><div style="display:flex;gap:8px;margin-top:8px"><button class="btn" id="save-profile">Save</button><button class="btn small" id="cancel-profile">Cancel</button></div></div>`); document.getElementById('save-profile').onclick = ()=>{ u.displayName=document.getElementById('ep-display').value||u.displayName; u.bio=document.getElementById('ep-bio').value; u.avatarColor=document.getElementById('ep-color').value; u.bg=document.getElementById('ep-bg').value; saveDB(db); closeModal(); renderAll(); saveState(); if(window._serverSync && window._serverSync.enabled){ window._serverSync.updateProfile(u.id, { display_name: u.displayName, bio: u.bio, avatar_color: u.avatarColor, bg: u.bg, luminal: u.luminal, last_daily_claim: u.lastDailyClaim }).catch(e=>console.warn('updateProfile failed',e)) } }; document.getElementById('cancel-profile').onclick = closeModal }
@@ -445,48 +473,55 @@
 
   openSettings.onclick = ()=>{ showModal(`<h3>Settings & Theme</h3><div class="setting-row">Accent color: <input id="set-accent" type="color" value="#6ee7b7" /></div><div class="setting-row">Background color: <input id="set-bg" type="color" value="#071226" /></div><div class="setting-row">Or enter gradient CSS: <input id="set-gradient" class="input" placeholder="linear-gradient(90deg,#123,#456)" /></div><div style="margin-top:8px"><button class="btn" id="apply-theme">Apply</button></div><div class="small-muted footer-note">You can set a single color or complex gradient (CSS) for your profile background via /bg command.</div>`); document.getElementById('apply-theme').onclick = ()=>{ const accent=document.getElementById('set-accent').value; const bgc=document.getElementById('set-bg').value; const grad=document.getElementById('set-gradient').value; if(grad){ document.documentElement.style.setProperty('--bg', bgc); document.body.style.background = grad } else { document.documentElement.style.setProperty('--accent', accent); document.body.style.background = `linear-gradient(180deg, ${bgc} 0%, #071226 100%)` } closeModal() } }
 
-  // helpers
-  function saveState(){ try{ localStorage.setItem('liumial_ui_state', JSON.stringify(state)) }catch(e){ console.warn(e) } }
-  function loadState(){ try{ const s = JSON.parse(localStorage.getItem('liumial_ui_state')||'{}'); state = Object.assign(state, s) }catch(e){} }
+  function saveState(){ try{ localStorage.setItem('liumial_ui_state',JSON.stringify(state))}catch(e){console.warn(e)} }
+  function loadState(){ try{ const s = JSON.parse(localStorage.getItem('liumial_ui_state')||'{}'); state=Object.assign(state,s)}catch(e){} }
   function randomColor(){ return ['#6ee7b7','#60a5fa','#f97316','#f472b6','#a78bfa'][Math.floor(Math.random()*5)] }
 
-  // render all
-  function renderAll(){ renderAuth(); renderServers(); renderChannels(); renderMessages(); renderProfilePanel(); renderProfileCompact(); renderQuests() ; if(state.currentUserId){ const u = db.users.find(x=>x.id===state.currentUserId); if(u?.bg) document.body.style.background = u.bg } }
+  function renderAll(){ renderAuth(); renderServers(); renderChannels(); renderMessages(); renderProfilePanel(); renderProfileCompact(); renderQuests(); if(state.currentUserId){ const u = db.users.find(x=>x.id===state.currentUserId); if(u?.bg) document.body.style.background = u.bg } }
 
-  // hide loading overlay
   function hideLoadingOverlay(){ const ov=document.getElementById('loading-overlay'); if(!ov) return; ov.classList.add('hidden'); setTimeout(()=>{ if(ov && ov.parentNode) ov.parentNode.removeChild(ov) }, 600) }
 
-  // message notification handler
-  function handleMentionOrReplyNotifications(message){ handleMentionOrReplyNotifications // placeholder (already used in server message handling) }
+  // per-user persistence helpers used during auth
+  function persistUserProgress(userId){ try{ localStorage.setItem(`liumial_user_${userId}`, JSON.stringify(db)); }catch(e){console.warn('persistUserProgress failed',e)} }
+  function restoreUserProgress(userId){ try{ const raw = localStorage.getItem(`liumial_user_${userId}`); if(!raw) return; const userDb = JSON.parse(raw); const existingRemoteIds = new Set(db.messages.filter(m=>m.remoteId).map(m=>''+m.remoteId)); userDb.messages.forEach(m=>{ const rid = m.remoteId || null; if(rid && existingRemoteIds.has(''+rid)) return; const fingerprint = `${m.authorId}|${m.ts}|${(m.content||'').slice(0,40)}`; const found = db.messages.some(x=>`${x.authorId}|${x.ts}|${(x.content||'').slice(0,40)}`===fingerprint); if(!found){ db.messages.push(m) } }); userDb.users.forEach(u=>{ if(!db.users.some(x=>x.id===u.id)) db.users.push(u) }); userDb.servers.forEach(s=>{ if(!db.servers.some(x=>x.id===s.id)) db.servers.push(s) }); saveDB(db) }catch(e){console.warn('restoreUserProgress failed',e)} }
 
-  // try to send message to server (uploads handled here)
-  async function trySendToServer(localMsg){
-    if(!(window._serverSync && window._serverSync.enabled)) throw new Error('server-sync not available')
-    const supabase = window._serverSync.supabase
-    const payload = { server_id: localMsg.serverId, channel_id: localMsg.channelId, author_id: localMsg.authorId, content: localMsg.content, ts: new Date(localMsg.ts).toISOString() }
-    if(localMsg.replyTo) payload.reply_to = localMsg.replyTo
-    if(localMsg.imageFile){
-      try{
-        const ext = (localMsg.imageFile.name || 'img').split('.').pop()
-        const path = `messages/${uid('f')}.${ext}`
-        const { error: upErr } = await supabase.storage.from('uploads').upload(path, localMsg.imageFile, { cacheControl: '3600', upsert: false })
-        if(upErr) throw upErr
-        const { data } = supabase.storage.from('uploads').getPublicUrl(path)
-        payload.image_url = data.publicUrl
-      }catch(e){ console.warn('image upload failed', e); throw e }
+  function showUpdateAnnouncementUI(){ const seen = localStorage.getItem('liumial_seen_version'); if(seen === APP_VERSION) return; autoBackupOnVersionChange(); }
+
+  function autoBackupOnVersionChange(){ const seen = localStorage.getItem('liumial_seen_version'); if(seen !== APP_VERSION){ try{ db.users.forEach(u=>{ try{ localStorage.setItem(`liumial_user_${u.id}_backup_${APP_VERSION}`, JSON.stringify(db)) }catch(e){} }) }catch(e){console.warn('backup failed',e)} showUpdateAnnouncement(APP_VERSION, APP_CHANGELOG) } }
+
+  // show announcement immediately on first load if version changed
+  setTimeout(()=>{ showUpdateAnnouncementUI() }, 300)
+
+  // finish loading animation/UX: fade logo, reveal app
+  function finishLoading() {
+    const overlay = document.getElementById('loading-overlay');
+    const loadingImg = document.getElementById('loading-image');
+    const brand = document.querySelector('.brand');
+    const appRoot = document.getElementById('app');
+    if (!overlay || !loadingImg || !appRoot) {
+      if (appRoot) appRoot.setAttribute('aria-hidden', 'false');
+      if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      return;
     }
-    // call server-sync sendMessage, mapping params expected by it
-    const serverRow = await window._serverSync.sendMessage({ serverId: payload.server_id, channelId: payload.channel_id, authorId: payload.author_id, content: payload.content, ts: payload.ts, image_url: payload.image_url, reply_to: payload.reply_to })
-    return serverRow
+    loadingImg.classList.add('fade-out');
+    if (brand) brand.classList.add('fade');
+    setTimeout(() => {
+      appRoot.setAttribute('aria-hidden', 'false');
+      overlay.classList.add('hidden');
+      setTimeout(() => {
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        if (brand) brand.classList.remove('fade');
+      }, 420);
+    }, 340);
   }
 
-  // deleteMessage function defined earlier
-  async function deleteMessage(msg){ const idx = db.messages.findIndex(m=>m.id===msg.id); if(idx!==-1) db.messages.splice(idx,1); saveDB(db); renderAll(); if(msg.remoteId && window._serverSync && window._serverSync.enabled){ try{ await window._serverSync.supabase.from('messages').delete().eq('id', msg.remoteId) }catch(e){ console.warn('server delete failed', e) } } }
+  const _finishLoadingOnce = (()=>{ let called=false; return ()=>{ if(called) return; called=true; finishLoading() } })();
+  setTimeout(_finishLoadingOnce, 3000); // fallback
 
-  // wire up initial state and hide loading
-  loadState(); renderAll(); hideLoadingOverlay();
+  // initial render & show
+  loadState(); renderAll(); _finishLoadingOnce();
 
   // expose for debugging
-  window._liumial = { db, state, saveDB, saveState, retrySend }
+  window._liumial = {db,state,saveDB,saveState,restoreUserProgress,persistUserProgress}
 
 })();
