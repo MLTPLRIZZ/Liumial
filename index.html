@@ -7,7 +7,14 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- Loading overlay: put your loading image at assets/loading.png (or update the src) -->
+  <div id="loading-overlay" class="loading-overlay">
+    <img src="assets/loading.png" alt="Loading" id="loading-image" />
+  </div>
+
   <div id="app" class="app-root">
+    <div class="servers-col" id="servers-col"></div>
+
     <aside class="sidebar">
       <div class="brand">Liumial Community</div>
       <div id="auth-area"></div>
@@ -46,8 +53,8 @@
   <!-- Modals and templates -->
   <div id="modal-root"></div>
 
-  <script src="app.js" defer></script>
-  <!-- server-sync will try to connect to the node API at /api/db and keep client and server in sync -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/bundle.min.js"></script>
   <script src="server-sync.js" defer></script>
+  <script src="app.js" defer></script>
 </body>
 </html>
