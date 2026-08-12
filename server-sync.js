@@ -1,10 +1,6 @@
 // server-sync.js — Supabase client wrapper for Liumial frontend
-// This file enables realtime messaging via Supabase Realtime. If Supabase is not configured
-// the client will fall back to localStorage-only mode. Add the CDN in index.html for no-build usage:
-// <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/bundle.min.js"></script>
-
+// Enhanced: supports image_url, reply_to, public/private servers, invite codes, join/update servers and server change subscriptions
 (function(){
-  // Configuration: try multiple places for runtime/ build-time env injection
   const SUPABASE_URL = window.__ENV__?.NEXT_PUBLIC_SUPABASE_URL || window.NEXT_PUBLIC_SUPABASE_URL || window.SUPABASE_URL || null;
   const SUPABASE_ANON = window.__ENV__?.NEXT_PUBLIC_SUPABASE_ANON_KEY || window.NEXT_PUBLIC_SUPABASE_ANON_KEY || window.SUPABASE_ANON || null;
 
@@ -14,7 +10,6 @@
     return;
   }
 
-  // Ensure the supabase library is available. If not, we expect the page to include the CDN bundle.
   const createClient = (window.supabase && window.supabase.createClient) ? window.supabase.createClient : (window.supabase_createClient || null);
   if(!createClient){
     console.warn('server-sync: @supabase/supabase-js not found. Include the CDN script or bundle the package. Falling back to localStorage mode.');
@@ -24,7 +19,6 @@
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, { realtime: { params: { eventsPerSecond: 25 } } });
 
-  // Helper: normalize server rows with channels
   async function fetchInitial(){
     try{
       const { data: servers, error: sErr } = await supabase.from('servers').select('*, channels(*)').order('created_at', { ascending: true });
@@ -41,7 +35,6 @@
   }
 
   function onMessage(cb){
-    // Use the channel API (v2) to subscribe to INSERT events on messages table
     try{
       const channel = supabase.channel('public:messages')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
@@ -55,13 +48,33 @@
     }
   }
 
+  function onServerChange(cb){
+    try{
+      const channel = supabase.channel('public:servers')
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'servers' }, payload => {
+          if(cb) cb(payload.new);
+        })
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'servers' }, payload => {
+          if(cb) cb(payload.new);
+        })
+        .subscribe();
+      return channel;
+    }catch(e){
+      console.error('server-sync.onServerChange error', e);
+      return null;
+    }
+  }
+
   async function sendMessage(msg){
     try{
       const { data, error } = await supabase.from('messages').insert([{
         server_id: msg.serverId,
-        channel_id: msg.channelId,
+        channel_id: msg.channelId || null,
+        conversation_id: msg.conversationId || null,
         author_id: msg.authorId,
         content: msg.content,
+        image_url: msg.image_url || null,
+        reply_to: msg.reply_to || null,
         ts: msg.ts ? msg.ts : new Date().toISOString()
       }]);
       if(error) throw error;
@@ -73,11 +86,51 @@
   }
 
   async function createServer(payload){
-    return supabase.from('servers').insert([payload]);
+    // payload should include: id (optional), name, owner_id, channels (array), members (array), public (bool), invite_code (text), roles (json)
+    try{
+      const rec = Object.assign({}, payload);
+      if(!rec.members) rec.members = rec.owner_id ? [rec.owner_id] : [];
+      if(!('public' in rec)) rec.public = true;
+      if(!rec.roles) rec.roles = {};
+      const { data, error } = await supabase.from('servers').insert([rec]).select();
+      if(error) throw error;
+      return data && data[0];
+    }catch(e){
+      console.error('server-sync.createServer error', e);
+      throw e;
+    }
   }
-  async function createChannel(payload){
-    return supabase.from('channels').insert([payload]);
+
+  async function joinServer(serverId, userId, inviteCode){
+    try{
+      const { data: server, error: fErr } = await supabase.from('servers').select('*').eq('id', serverId).maybeSingle();
+      if(fErr) throw fErr;
+      if(!server) throw new Error('Server not found');
+      if(!server.public){
+        if(!inviteCode || inviteCode !== server.invite_code) throw new Error('Invalid invite code');
+      }
+      const members = server.members || [];
+      if(!members.includes(userId)) members.push(userId);
+      const { data, error } = await supabase.from('servers').update({ members }).eq('id', serverId).select();
+      if(error) throw error;
+      return data && data[0];
+    }catch(e){
+      console.error('server-sync.joinServer error', e);
+      throw e;
+    }
   }
+
+  async function updateServerRoles(serverId, roles){
+    try{
+      const { data, error } = await supabase.from('servers').update({ roles }).eq('id', serverId).select();
+      if(error) throw error;
+      return data && data[0];
+    }catch(e){
+      console.error('server-sync.updateServerRoles error', e);
+      throw e;
+    }
+  }
+
   async function updateProfile(id, patch){
     return supabase.from('profiles').update(patch).eq('id', id);
   }
@@ -87,11 +140,13 @@
     supabase,
     fetchInitial,
     onMessage,
+    onServerChange,
     sendMessage,
     createServer,
-    createChannel,
+    joinServer,
+    updateServerRoles,
     updateProfile
   };
 
   console.log('server-sync: initialized (Supabase)');
-})();
+});
