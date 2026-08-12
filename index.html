@@ -7,12 +7,15 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- Loading overlay: put your loading image at assets/loading.png (or update the src) -->
-  <div id="loading-overlay" class="loading-overlay">
-    <img src="assets/loading.png" alt="Loading" id="loading-image" />
+  <!-- Loading overlay: uses SVG (preferred) with PNG fallback if needed -->
+  <div id="loading-overlay" class="loading-overlay" aria-hidden="false">
+    <picture>
+      <source srcset="assets/loading.svg" type="image/svg+xml">
+      <img src="assets/loading.svg" alt="Loading Liumial" id="loading-image" />
+    </picture>
   </div>
 
-  <div id="app" class="app-root">
+  <div id="app" class="app-root" aria-hidden="true">
     <div class="servers-col" id="servers-col"></div>
 
     <aside class="sidebar">
@@ -53,6 +56,7 @@
   <!-- Modals and templates -->
   <div id="modal-root"></div>
 
+  <!-- Supabase CDN (client) + server-sync + app -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/bundle.min.js"></script>
   <script src="server-sync.js" defer></script>
   <script src="app.js" defer></script>
