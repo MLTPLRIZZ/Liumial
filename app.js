@@ -41,7 +41,7 @@
   // Seed demo data if empty
   if(db.users.length===0){
     const bot = {id:uid('u'), username:'HelperBot', displayName:'Helper Bot', avatarColor:'#6ee7b7', bg:'', bio:'Community helper', xp:100, badges:[]};
-    const admin = {id:uid('u'), username:'admin', displayName:'Admin', avatarColor:'#f97316', bg:'', bio:'I run this demo', xp:200, badges:['founder']};
+    const admin = {id:uid('u'), username:'admin', displayName:'Admin', avatarColor:'#f97316', bg:'', bio:'I run this demo', xp:200, badges:['founder'], roles:['Admin']};
     db.users.push(bot,admin);
     const s = {id:uid('s'), name:'Welcome Server', ownerId:admin.id, channels:[{id:uid('c'),name:'general'},{id:uid('c'),name:'quests'}], members:[admin.id,bot.id], createdAt:now()};
     db.servers.push(s);
@@ -65,7 +65,7 @@
     authArea.innerHTML='';
     if(state.currentUserId){
       const u = db.users.find(x=>x.id===state.currentUserId);
-      const el = document.createElement('div'); el.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><div style="width:36px;height:36px;border-radius:8px;background:${u.avatarColor}"></div><div><div>${u.displayName}</div><div class=\"small-muted\">@${u.username}</div></div></div>`;
+      const el = document.createElement('div'); el.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><div style="width:36px;height:36px;border-radius:8px;background:${u.avatarColor}"></div><div><div>${escapeHtml(u.displayName)}</div><div class="small-muted">@${escapeHtml(u.username)}</div></div></div>`;
       authArea.appendChild(el);
     } else {
       const btn = document.createElement('button'); btn.className='btn'; btn.textContent='Log in / Sign up'; btn.onclick=showAuthModal; authArea.appendChild(btn);
@@ -91,7 +91,10 @@
     msgs.forEach(m=>{
       const author = db.users.find(u=>u.id===m.authorId) || {displayName:'Unknown', avatarColor:'#64748b', username:'unknown'};
       const row = document.createElement('div'); row.className='message-row';
-      row.innerHTML = `<img class="message-avatar" src="" style="background:${author.avatarColor}" alt="${author.displayName}" /><div class="message-body"><div class="message-meta"><strong>${escapeHtml(author.displayName)}</strong> <span class="small-muted">@${escapeHtml(author.username)} • ${new Date(m.ts).toLocaleTimeString()}</span></div><div class="message-text">${escapeHtml(m.content)}</div></div>`;
+      row.innerHTML = `<img class="message-avatar" src="" style="background:${author.avatarColor}" alt="${escapeHtml(author.displayName)}" /><div class="message-body"><div class="message-meta"><strong>${escapeHtml(author.displayName)}</strong> <span class="small-muted">@${escapeHtml(author.username)} • ${new Date(m.ts).toLocaleTimeString()}</span></div><div class="message-text">${escapeHtml(m.content)}</div></div>`;
+      // wire avatar click to open profile
+      const avatarEl = row.querySelector('.message-avatar');
+      if(avatarEl){ avatarEl.style.cursor = 'pointer'; avatarEl.onclick = ()=> showProfile(author.id); }
       messagesEl.appendChild(row);
     });
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -114,9 +117,67 @@
   function showModal(html){ const root = document.getElementById('modal-root'); root.innerHTML = `<div class="modal-backdrop"></div><div class="modal">${html}</div>`; root.querySelector('.modal-backdrop').onclick=closeModal; }
   function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
 
+  // Show Discord-style profile modal for a user
+  function showProfile(userId){
+    const user = db.users.find(u => u.id === userId);
+    if(!user) return;
+
+    // find mutual servers with current user
+    const mutuals = [];
+    if(state.currentUserId){
+      db.servers.forEach(s => {
+        const members = s.members || [];
+        if(members.includes(userId) && members.includes(state.currentUserId)){
+          mutuals.push(s);
+        }
+      });
+    }
+
+    const rolesHtml = (user.roles || []).map(r => `<span class="profile-role">${escapeHtml(r)}</span>`).join('');
+    const mutualsHtml = mutuals.map(s => `<div class="mutual-server" title="${escapeHtml(s.name)}">${escapeHtml((s.name||'')[0]||'S')}</div>`).join('');
+
+    const bannerStyle = user.bg ? `style="background:${escapeHtml(user.bg)}"` : '';
+    const avatarStyle = `style="background:${escapeHtml(user.avatarColor||'#6ee7b7')}"`;
+
+    const html = `
+      <div class="profile-modal" role="dialog" aria-modal="true" aria-label="User profile">
+        <div class="profile-banner" ${bannerStyle}></div>
+        <div class="profile-content">
+          <div>
+            <img class="profile-avatar-large" ${avatarStyle} alt="${escapeHtml(user.displayName||user.username)}" />
+          </div>
+          <div class="profile-main">
+            <div class="profile-name">${escapeHtml(user.displayName||user.username)}</div>
+            <div class="profile-username">@${escapeHtml(user.username)}</div>
+            <div class="profile-bio">${escapeHtml(user.bio||'')}</div>
+
+            <div class="profile-actions">
+              <button class="btn" id="pm-btn">Message</button>
+              <button class="btn" id="friend-btn">Add Friend</button>
+              <button class="btn" id="close-profile">Close</button>
+            </div>
+
+            <div class="profile-roles">${rolesHtml || ''}</div>
+            <div class="profile-mutuals">${mutualsHtml || '<div class="small-muted">No mutual servers</div>'}</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    showModal(html);
+
+    // wire up actions
+    const pmBtn = document.getElementById('pm-btn');
+    if(pmBtn) pmBtn.onclick = () => { closeModal(); alert('Open DM with ' + (user.displayName || user.username)); };
+    const friendBtn = document.getElementById('friend-btn');
+    if(friendBtn) friendBtn.onclick = () => { alert('Friend request sent to ' + (user.displayName || user.username)); };
+    const closeBtn = document.getElementById('close-profile');
+    if(closeBtn) closeBtn.onclick = closeModal;
+  }
+
   function showAuthModal(){ showModal(`<h3>Log in / Sign up</h3><div style="display:flex;gap:8px;margin-top:8px"><input id="auth-username" class="input" placeholder="username" /><input id="auth-password" type="password" class="input" placeholder="password" /></div><div style="margin-top:8px;display:flex;gap:8px"><button class="btn" id="auth-login">Log in</button><button class="btn" id="auth-signup">Sign up</button></div><div class="small-muted footer-note" style="margin-top:8px">This demo stores accounts locally in your browser. For production use proper auth.</div>`);
     document.getElementById('auth-login').onclick = ()=>{ const u=document.getElementById('auth-username').value.trim(); const p=document.getElementById('auth-password').value; const found = db.users.find(x=>x.username.toLowerCase()===u.toLowerCase()); if(!found){ alert('User not found — sign up instead'); return; } if(found.password && found.password !== btoa(p)){ alert('Wrong password'); return; } state.currentUserId = found.id; closeModal(); renderAll(); saveState(); }
-    document.getElementById('auth-signup').onclick = ()=>{ const u=document.getElementById('auth-username').value.trim(); const p=document.getElementById('auth-password').value; if(!u||!p){ alert('Choose username and password'); return; } if(db.users.find(x=>x.username.toLowerCase()===u.toLowerCase())){ alert('Username taken'); return; } const newUser = {id:uid('u'), username:u, displayName:u, password:btoa(p), avatarColor:['#6ee7b7','#60a5fa','#f97316','#f472b6','#a78bfa'][Math.floor(Math.random()*5)], bg:'', bio:'', xp:0, badges:[]}; db.users.push(newUser); saveDB(db); state.currentUserId=newUser.id; closeModal(); renderAll(); saveState(); }
+    document.getElementById('auth-signup').onclick = ()=>{ const u=document.getElementById('auth-username').value.trim(); const p=document.getElementById('auth-password').value; if(!u||!p){ alert('Choose username and password'); return; } if(db.users.find(x=>x.username.toLowerCase()===u.toLowerCase())){ alert('Username taken'); return; } const newUser = {id:uid('u'), username:u, displayName:u, password:btoa(p), avatarColor:['#6ee7b7','#60a5fa','#f97316','#f472b6','#a78bfa'][Math.floor(Math.random()*5)], bg:'', bio:'', xp:0, badges:[], roles:[]}; db.users.push(newUser); saveDB(db); state.currentUserId=newUser.id; closeModal(); renderAll(); saveState(); }
   }
 
   function showEditProfile(){ const u = db.users.find(x=>x.id===state.currentUserId); showModal(`<h3>Edit Profile</h3><div style="display:flex;flex-direction:column;gap:8px"><input id="ep-display" class="input" value="${escapeHtml(u.displayName||'')}" placeholder="Display name" /><input id="ep-bio" class="input" value="${escapeHtml(u.bio||'')}" placeholder="Bio" /><input id="ep-color" class="input" value="${escapeHtml(u.avatarColor||'')}" placeholder="Avatar color" /><input id="ep-bg" class="input" value="${escapeHtml(u.bg||'')}" placeholder="Background CSS" /></div><div style="margin-top:8px;display:flex;gap:8px"><button class="btn" id="save-profile">Save</button><button class="btn" id="cancel-profile">Cancel</button></div>`);
@@ -153,8 +214,7 @@
       const bot = db.users[0]; db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:bot.id, content:`I am HelperBot — try /help to see commands.`, ts:now()}); saveDB(db);
     }
   }
-  function handleCommand(msg, content){ const parts = content.slice(1).split(' '); const cmd = parts[0].toLowerCase(); const args = parts.slice(1); const botId = db.users[0].id; if(cmd==='help'){ db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:botId, content:'Commands: /help /quests /profile /bg <color or gradient>', ts:now()+60}); } else if(cmd==='quests'){ const list = (db.quests||[]).map(q=>`- ${q.title}: ${q.desc}`).join('\n'); db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:botId, content:'Quests:\n'+list, ts:now()+60}); } else if(cmd==='bg'){ if(!state.currentUserId){ db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:botId, content:'Log in to change your background.', ts:now()+60}); return; } const val=args.join(' '); const u=db.users.find(x=>x.id===state.currentUserId); if(u){ u.bg=val; saveDB(db); db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:botId, content:`Background updated to ${val}`, ts:now()+60}); } } else { db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:botId, content:`Unknown command: ${cmd}. Use /help.`, ts:now()+60}); } saveDB(db);
-  }
+  function handleCommand(msg, content){ const parts = content.slice(1).split(' '); const cmd = parts[0].toLowerCase(); const args = parts.slice(1); const botId = db.users[0].id; if(cmd==='help'){db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:botId, content:'Commands: /help /quests /profile /bg <color or gradient>', ts:now()+60});} else if(cmd==='quests'){ const list=(db.quests||[]).map(q=>`- ${q.title}: ${q.desc}`).join('\n'); db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:botId, content:'Quests:\n'+list, ts:now()+60}); } else if(cmd==='bg'){ if(!state.currentUserId){ db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:botId, content:'Log in to change your background.', ts:now()+60}); return; } const val=args.join(' '); const u=db.users.find(x=>x.id===state.currentUserId); if(u){ u.bg=val; saveDB(db); db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:botId, content:`Background updated to ${val}`, ts:now()+60}); } } else { db.messages.push({id:uid('m'), serverId:msg.serverId, channelId:msg.channelId, authorId:botId, content:`Unknown command: ${cmd}. Use /help.`, ts:now()+60}); } saveDB(db); }
 
   // Initialization with server-sync
   async function init(){
@@ -164,8 +224,8 @@
       try{
         const initial = await window._serverSync.fetchInitial();
         // map servers
-        if(initial.servers && initial.servers.length){ db.servers = initial.servers.map(s=>({ id:s.id, name:s.name, ownerId:s.owner_id, channels:(s.channels||[]).map(c=>({id:c.id,name:c.name})), members:[], createdAt: new Date(s.created_at).getTime() })); }
-        if(initial.users) db.users = initial.users.map(u=>({ id:u.id, username:u.username, displayName:u.display_name||u.username, avatarColor:u.avatar_color||'#6ee7b7', bg:u.bg, bio:u.bio, xp:u.xp, badges:u.badges }));
+        if(initial.servers && initial.servers.length){ db.servers = initial.servers.map(s=>({ id:s.id, name:s.name, ownerId:s.owner_id, channels:(s.channels||[]).map(c=>({id:c.id,name:c.name})), members:s.members||[], createdAt: new Date(s.created_at).getTime() })); }
+        if(initial.users) db.users = initial.users.map(u=>({ id:u.id, username:u.username, displayName:u.display_name||u.username, avatarColor:u.avatar_color||'#6ee7b7', bg:u.bg, bio:u.bio, xp:u.xp, badges:u.badges, roles:u.roles||[] }));
         if(initial.messages) db.messages = initial.messages.map(m=>({ id:m.id, serverId:m.server_id, channelId:m.channel_id, authorId:m.author_id, content:m.content, ts:new Date(m.ts).getTime() }));
       }catch(e){ console.warn('fetchInitial failed',e); }
       // subscribe to new messages
